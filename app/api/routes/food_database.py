@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Mapping
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -21,7 +22,9 @@ from app.schemas.food_database import (
 )
 
 router = APIRouter(prefix="/api/food-database", tags=["food-database"])
+compat_router = APIRouter(tags=["food-database"])
 AccountUserHeader = Annotated[str | None, Header(alias="Edamam-Account-User")]
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def _assert_credentials() -> None:
@@ -151,6 +154,66 @@ def _call_edamam(
         ) from exc
 
     return JSONResponse(content=payload, status_code=response_status)
+
+
+def _image_url_to_data_uri(image_url: str) -> str:
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image_url must use http or https",
+        )
+
+    image_request = Request(
+        image_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; TorvixBackend/1.0)",
+            "Accept": "image/*,*/*;q=0.8",
+        },
+    )
+    try:
+        with urlopen(image_request, timeout=20) as response:
+            content_type = response.headers.get("Content-Type", "").split(";")[0].strip()
+            if not content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="image_url must point to an image resource",
+                )
+
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_IMAGE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Image is too large (max {MAX_IMAGE_BYTES} bytes)",
+                    )
+                chunks.append(chunk)
+    except HTTPException:
+        raise
+    except HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot download image_url (HTTP {exc.code})",
+        ) from exc
+    except URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot download image_url",
+        ) from exc
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            detail="Timed out while downloading image_url",
+        ) from exc
+
+    image_bytes = b"".join(chunks)
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{content_type};base64,{encoded}"
 
 
 def _parser_query_items(
@@ -310,33 +373,72 @@ def nutrients(
     )
 
 
+def _post_nutrients_from_image(
+    payload: NutrientsFromImageRequest,
+    beta: Literal[True],
+    edamam_account_user: str | None,
+) -> JSONResponse:
+    _assert_credentials()
+    effective_beta = beta
+    query_items = _with_credentials(
+        _query_items_from_mapping({"beta": effective_beta})
+    )
+    target_url = _edamam_url("/api/food-database/nutrients-from-image", query_items)
+    body_payload = payload.model_dump(by_alias=True, exclude_none=True)
+    body = json.dumps(body_payload).encode("utf-8")
+
+    try:
+        return _call_edamam(
+            target_url,
+            method="POST",
+            request_body=body,
+            extra_headers=_edamam_headers(
+                edamam_account_user=edamam_account_user,
+                content_type="application/json",
+            ),
+        )
+    except HTTPException as exc:
+        if (
+            exc.status_code == status.HTTP_400_BAD_REQUEST
+            and isinstance(exc.detail, str)
+            and "Invalid image" in exc.detail
+            and payload.image is None
+            and payload.image_url is not None
+        ):
+            data_uri = _image_url_to_data_uri(payload.image_url)
+            fallback_body = json.dumps({"image": data_uri}).encode("utf-8")
+            return _call_edamam(
+                target_url,
+                method="POST",
+                request_body=fallback_body,
+                extra_headers=_edamam_headers(
+                    edamam_account_user=edamam_account_user,
+                    content_type="application/json",
+                ),
+            )
+        raise
+
+
+@router.post("/v2/nutrients-from-image", include_in_schema=False)
 @router.post("/nutrients-from-image")
 def nutrients_from_image(
     payload: NutrientsFromImageRequest,
-    beta: Annotated[
-        bool | None,
-        Query(
-            description="Allow beta features in request and response.",
-        ),
-    ] = None,
+    beta: Literal[True] = Query(
+        default=True,
+        description="Allow beta features in request and response. Defaults to true.",
+    ),
     edamam_account_user: AccountUserHeader = None,
 ) -> JSONResponse:
-    _assert_credentials()
-    query_items = _with_credentials(
-        _query_items_from_mapping({"beta": beta} if beta is not None else {})
-    )
-    target_url = _edamam_url("/api/food-database/nutrients-from-image", query_items)
-    body = payload.model_dump_json(by_alias=True).encode("utf-8")
+    return _post_nutrients_from_image(payload, beta, edamam_account_user)
 
-    return _call_edamam(
-        target_url,
-        method="POST",
-        request_body=body,
-        extra_headers=_edamam_headers(
-            edamam_account_user=edamam_account_user,
-            content_type="application/json",
-        ),
-    )
+
+@compat_router.post("/nutrients-from-image", include_in_schema=False)
+def nutrients_from_image_compat(
+    payload: NutrientsFromImageRequest,
+    beta: Literal[True] = True,
+    edamam_account_user: AccountUserHeader = None,
+) -> JSONResponse:
+    return _post_nutrients_from_image(payload, beta, edamam_account_user)
 
 
 @router.get("/auto-complete")
