@@ -143,6 +143,8 @@ def register_user(payload: UserCreate, session: SessionDep) -> User:
         weight_metric=payload.weight_metric,
         height=payload.height,
         height_metric=payload.height_metric,
+        gender=payload.gender,
+        activity_level=payload.activity_level,
         what_do_you_want_to_achieve=payload.what_do_you_want_to_achieve,
     )
     session.add(user)

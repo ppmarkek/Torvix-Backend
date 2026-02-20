@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from pydantic import Field
 
-from app.models.user import Goal, HeightMetric, WeightMetric
+from app.models.user import ActivityLevel, Gender, Goal, HeightMetric, WeightMetric
 from app.schemas.camel_model import CamelModel
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
@@ -18,6 +18,8 @@ class UserCreate(CamelModel):
     weight_metric: WeightMetric | None = None
     height: float | None = Field(default=None, gt=0)
     height_metric: HeightMetric | None = None
+    gender: Gender | None = None
+    activity_level: ActivityLevel | None = None
     what_do_you_want_to_achieve: Goal | None = None
 
 
@@ -31,6 +33,8 @@ class UserUpdate(CamelModel):
     weight_metric: WeightMetric | None = None
     height: float | None = Field(default=None, gt=0)
     height_metric: HeightMetric | None = None
+    gender: Gender | None = None
+    activity_level: ActivityLevel | None = None
     what_do_you_want_to_achieve: Goal | None = None
 
 
@@ -44,6 +48,8 @@ class UserRead(CamelModel):
     weight_metric: WeightMetric | None = None
     height: float | None = None
     height_metric: HeightMetric | None = None
+    gender: Gender | None = None
+    activity_level: ActivityLevel | None = None
     what_do_you_want_to_achieve: Goal | None = None
 
     created_at: datetime

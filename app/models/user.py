@@ -20,6 +20,20 @@ class Goal(str, Enum):
     maintain = "maintain"
     muscle_gain = "muscle_gain"
 
+
+class Gender(str, Enum):
+    male = "male"
+    female = "female"
+
+
+class ActivityLevel(str, Enum):
+    minimal = "minimal"
+    light = "light"
+    medium = "medium"
+    high = "high"
+    very_high = "very_high"
+
+
 class User(BaseTable, table=True):
     __tablename__: str = "users" # type: ignore[assignment]
 
@@ -35,4 +49,6 @@ class User(BaseTable, table=True):
     height: float | None = Field(default=None)
     height_metric: HeightMetric | None = Field(default=None)
 
+    gender: Gender | None = Field(default=None)
+    activity_level: ActivityLevel | None = Field(default=None)
     what_do_you_want_to_achieve: Goal | None = Field(default=None)

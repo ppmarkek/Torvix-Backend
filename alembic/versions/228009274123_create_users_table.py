@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -25,14 +26,17 @@ def upgrade() -> None:
     if "users" in inspector.get_table_names():
         return
 
-    weight_metric_enum = sa.Enum("kg", "lbs", "st", name="weightmetric")
-    height_metric_enum = sa.Enum("cm", "ft_in", name="heightmetric")
-    goal_enum = sa.Enum("lose_fat", "maintain", "muscle_gain", name="goal")
-
     if bind.dialect.name == "postgresql":
+        weight_metric_enum = postgresql.ENUM("kg", "lbs", "st", name="weightmetric", create_type=False)
+        height_metric_enum = postgresql.ENUM("cm", "ft_in", name="heightmetric", create_type=False)
+        goal_enum = postgresql.ENUM("lose_fat", "maintain", "muscle_gain", name="goal", create_type=False)
         weight_metric_enum.create(bind, checkfirst=True)
         height_metric_enum.create(bind, checkfirst=True)
         goal_enum.create(bind, checkfirst=True)
+    else:
+        weight_metric_enum = sa.Enum("kg", "lbs", "st", name="weightmetric")
+        height_metric_enum = sa.Enum("cm", "ft_in", name="heightmetric")
+        goal_enum = sa.Enum("lose_fat", "maintain", "muscle_gain", name="goal")
 
     op.create_table(
         "users",
@@ -64,6 +68,6 @@ def downgrade() -> None:
         op.drop_table("users")
 
     if bind.dialect.name == "postgresql":
-        sa.Enum(name="goal").drop(bind, checkfirst=True)
-        sa.Enum(name="heightmetric").drop(bind, checkfirst=True)
-        sa.Enum(name="weightmetric").drop(bind, checkfirst=True)
+        postgresql.ENUM(name="goal").drop(bind, checkfirst=True)
+        postgresql.ENUM(name="heightmetric").drop(bind, checkfirst=True)
+        postgresql.ENUM(name="weightmetric").drop(bind, checkfirst=True)
