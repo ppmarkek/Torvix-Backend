@@ -116,11 +116,38 @@ def _as_dict(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def _incomplete_reason(response: Any) -> str | None:
+    response_data = _as_dict(response) or {}
+    if response_data.get("status") != "incomplete":
+        return None
+
+    incomplete_details = response_data.get("incomplete_details")
+    if isinstance(incomplete_details, dict):
+        reason = incomplete_details.get("reason")
+        if isinstance(reason, str) and reason:
+            return reason
+    return "unknown"
+
+
 def _create_openai_response(client: Any, request_params: dict[str, Any]) -> Any:
     effective_params = dict(request_params)
-    for attempt in range(2):
+    for attempt in range(3):
         try:
-            return client.responses.create(**effective_params)
+            response = client.responses.create(**effective_params)
+
+            incomplete_reason = _incomplete_reason(response)
+            if (
+                incomplete_reason == "max_output_tokens"
+                and attempt < 2
+                and isinstance(effective_params.get("max_output_tokens"), int)
+            ):
+                current_limit = effective_params["max_output_tokens"]
+                next_limit = min(max(current_limit * 2, current_limit + 800), 4096)
+                if next_limit > current_limit:
+                    effective_params["max_output_tokens"] = next_limit
+                    continue
+
+            return response
         except BadRequestError as exc:
             message = _bad_request_detail(exc)
             # Some models reject temperature; retry once without it.
@@ -368,7 +395,7 @@ async def food_photo(
     client = _create_openai_client()
     request_params: dict[str, Any] = {
         "model": model_name,
-        "max_output_tokens": 1200,
+        "max_output_tokens": 2000,
         "input": [
             {
                 "role": "user",
