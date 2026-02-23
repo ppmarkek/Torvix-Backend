@@ -129,33 +129,36 @@ def _incomplete_reason(response: Any) -> str | None:
     return "unknown"
 
 
-def _create_openai_response(client: Any, request_params: dict[str, Any]) -> Any:
+def _create_openai_response(
+    client: Any,
+    request_params: dict[str, Any],
+    *,
+    max_output_token_retries: int = 0,
+) -> Any:
     effective_params = dict(request_params)
-    for attempt in range(3):
+    retries_left = max(0, max_output_token_retries)
+    while True:
         try:
             response = client.responses.create(**effective_params)
 
             incomplete_reason = _incomplete_reason(response)
             if (
                 incomplete_reason == "max_output_tokens"
-                and attempt < 2
+                and retries_left > 0
                 and isinstance(effective_params.get("max_output_tokens"), int)
             ):
                 current_limit = effective_params["max_output_tokens"]
-                next_limit = min(max(current_limit * 2, current_limit + 800), 4096)
+                next_limit = min(max(current_limit + 400, int(current_limit * 1.5)), 4096)
                 if next_limit > current_limit:
                     effective_params["max_output_tokens"] = next_limit
+                    retries_left -= 1
                     continue
 
             return response
         except BadRequestError as exc:
             message = _bad_request_detail(exc)
             # Some models reject temperature; retry once without it.
-            if (
-                attempt == 0
-                and "Unsupported parameter: 'temperature'" in message
-                and "temperature" in effective_params
-            ):
+            if "Unsupported parameter: 'temperature'" in message and "temperature" in effective_params:
                 effective_params.pop("temperature", None)
                 continue
             raise HTTPException(
@@ -187,11 +190,6 @@ def _create_openai_response(client: Any, request_params: dict[str, Any]) -> Any:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="OpenAI API request failed",
             ) from exc
-
-    raise HTTPException(
-        status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="OpenAI API request failed",
-    )
 
 
 def _extract_text(response: Any) -> str:
@@ -391,11 +389,16 @@ async def food_photo(
         )
 
     data_uri = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-    model_name = model or settings.OPENAI_MODEL
+    model_name = model or settings.OPENAI_FOOD_PHOTO_MODEL or settings.OPENAI_MODEL
+    max_output_tokens = settings.OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS
+    if max_output_tokens < 200:
+        max_output_tokens = 200
+    if max_output_tokens > 4096:
+        max_output_tokens = 4096
     client = _create_openai_client()
     request_params: dict[str, Any] = {
         "model": model_name,
-        "max_output_tokens": 2000,
+        "max_output_tokens": max_output_tokens,
         "input": [
             {
                 "role": "user",
@@ -409,7 +412,7 @@ async def food_photo(
             }
         ],
     }
-    response = _create_openai_response(client, request_params)
+    response = _create_openai_response(client, request_params, max_output_token_retries=1)
     raw_text = _extract_text(response)
     parsed_response = _extract_json_object(raw_text)
 

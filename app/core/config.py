@@ -12,6 +12,10 @@ class Settings(BaseModel):
     REFRESH_TOKEN_DAYS: int = int(os.getenv("REFRESH_TOKEN_DAYS", "30"))
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    OPENAI_FOOD_PHOTO_MODEL: str = os.getenv("OPENAI_FOOD_PHOTO_MODEL", "gpt-5-mini")
+    OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS: int = int(
+        os.getenv("OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS", "1200")
+    )
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 settings = Settings()
