@@ -87,36 +87,66 @@ def _assert_credentials() -> None:
     )
 
 
+def _bad_request_detail(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message
+    return str(exc)
+
+
 def _create_openai_response(client: Any, request_params: dict[str, Any]) -> Any:
-    try:
-        return client.responses.create(**request_params)
-    except BadRequestError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except AuthenticationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OpenAI authentication failed",
-        ) from exc
-    except RateLimitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="OpenAI rate limit exceeded",
-        ) from exc
-    except APITimeoutError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OpenAI request timed out",
-        ) from exc
-    except APIConnectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Cannot reach OpenAI API",
-        ) from exc
-    except APIError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="OpenAI API request failed",
-        ) from exc
+    effective_params = dict(request_params)
+    for attempt in range(2):
+        try:
+            return client.responses.create(**effective_params)
+        except BadRequestError as exc:
+            message = _bad_request_detail(exc)
+            # Some models reject temperature; retry once without it.
+            if (
+                attempt == 0
+                and "Unsupported parameter: 'temperature'" in message
+                and "temperature" in effective_params
+            ):
+                effective_params.pop("temperature", None)
+                continue
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=message,
+            ) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="OpenAI authentication failed",
+            ) from exc
+        except RateLimitError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="OpenAI rate limit exceeded",
+            ) from exc
+        except APITimeoutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="OpenAI request timed out",
+            ) from exc
+        except APIConnectionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Cannot reach OpenAI API",
+            ) from exc
+        except APIError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="OpenAI API request failed",
+            ) from exc
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="OpenAI API request failed",
+    )
 
 
 def _extract_text(response: Any) -> str:
@@ -268,7 +298,6 @@ async def food_photo(
     client = _create_openai_client()
     request_params: dict[str, Any] = {
         "model": model_name,
-        "temperature": 0.2,
         "max_output_tokens": 1200,
         "input": [
             {
