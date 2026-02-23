@@ -31,6 +31,13 @@ from app.schemas.openai import (
 
 router = APIRouter(prefix="/api/openai", tags=["openai"])
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+SUPPORTED_IMAGE_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
 SUPPORTED_LANGUAGE_CODES = {
     "en": "English",
     "ru": "Russian",
@@ -98,6 +105,17 @@ def _bad_request_detail(exc: Exception) -> str:
     return str(exc)
 
 
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(exclude_none=True)
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
 def _create_openai_response(client: Any, request_params: dict[str, Any]) -> Any:
     effective_params = dict(request_params)
     for attempt in range(2):
@@ -156,21 +174,66 @@ def _extract_text(response: Any) -> str:
         if text:
             return text
 
-    output_items = getattr(response, "output", None)
+    response_data = _as_dict(response) or {}
+    direct_text_data = response_data.get("output_text")
+    if isinstance(direct_text_data, str):
+        text = direct_text_data.strip()
+        if text:
+            return text
+
+    output_items = response_data.get("output")
+    if output_items is None:
+        output_items = getattr(response, "output", None)
     if isinstance(output_items, list):
         text_parts: list[str] = []
+        refusal_parts: list[str] = []
         for output_item in output_items:
-            content_items = getattr(output_item, "content", None)
+            output_item_data = _as_dict(output_item) or {}
+            content_items = output_item_data.get("content")
+            if content_items is None:
+                content_items = getattr(output_item, "content", None)
             if not isinstance(content_items, list):
                 continue
             for content_item in content_items:
-                content_text = getattr(content_item, "text", None)
+                content_item_data = _as_dict(content_item) or {}
+                content_text = content_item_data.get("text")
+                if content_text is None:
+                    content_text = getattr(content_item, "text", None)
+                if isinstance(content_text, dict):
+                    content_text = content_text.get("value")
                 if isinstance(content_text, str):
                     text_parts.append(content_text)
+
+                refusal_text = content_item_data.get("refusal")
+                if refusal_text is None:
+                    refusal_text = getattr(content_item, "refusal", None)
+                if isinstance(refusal_text, str):
+                    refusal_parts.append(refusal_text)
 
         merged_text = "".join(text_parts).strip()
         if merged_text:
             return merged_text
+        merged_refusal = " ".join(refusal_parts).strip()
+        if merged_refusal:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"OpenAI refused image analysis: {merged_refusal}",
+            )
+
+    response_status = response_data.get("status")
+    incomplete_details = response_data.get("incomplete_details")
+    if isinstance(response_status, str):
+        if isinstance(incomplete_details, dict):
+            reason = incomplete_details.get("reason")
+            if isinstance(reason, str) and reason:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"OpenAI returned no text output (status={response_status}, reason={reason})",
+                )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"OpenAI returned no text output (status={response_status})",
+        )
 
     raise HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
@@ -279,6 +342,13 @@ async def food_photo(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="file must be an image",
+        )
+    if content_type == "image/jpg":
+        content_type = "image/jpeg"
+    if content_type not in SUPPORTED_IMAGE_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported image format. Use jpeg, png, webp or gif.",
         )
 
     image_bytes = await file.read()
