@@ -16,6 +16,9 @@ class Settings(BaseModel):
     OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS: int = int(
         os.getenv("OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS", "1200")
     )
+    OPENAI_SELF_ADD_FOOD_MAX_OUTPUT_TOKENS: int = int(
+        os.getenv("OPENAI_SELF_ADD_FOOD_MAX_OUTPUT_TOKENS", "1200")
+    )
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
 settings = Settings()

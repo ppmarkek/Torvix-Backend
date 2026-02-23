@@ -24,9 +24,10 @@ except ImportError:
 
 from app.core.config import settings
 from app.schemas.openai import (
-    FoodPhotoAnalysisResponse,
+    FoodAnalysisResponse,
     OpenAIChatRequest,
     OpenAIChatResponse,
+    SelfAddFoodRequest,
 )
 
 router = APIRouter(prefix="/api/openai", tags=["openai"])
@@ -157,7 +158,6 @@ def _create_openai_response(
             return response
         except BadRequestError as exc:
             message = _bad_request_detail(exc)
-            # Some models reject temperature; retry once without it.
             if "Unsupported parameter: 'temperature'" in message and "temperature" in effective_params:
                 effective_params.pop("temperature", None)
                 continue
@@ -325,6 +325,41 @@ def _food_photo_instructions(language_code: str, language_name: str) -> str:
     )
 
 
+def _self_add_food_instructions(
+    language_code: str,
+    language_name: str,
+    food: list[SelfAddFoodRequest],
+) -> str:
+    input_items = [item.model_dump(by_alias=True) for item in food]
+    return (
+        "Analyze the provided food list and estimate nutrition.\n"
+        f"Use language code `{language_code}` ({language_name}) for `dishName` and every ingredient `name`.\n"
+        "Interpret `weightPerUnit` as grams.\n"
+        "Use `additionalInformation` as extra context for each food item.\n"
+        "Input food list JSON:\n"
+        f"{json.dumps(input_items, ensure_ascii=False)}\n"
+        "Return ONLY valid JSON. Do not use markdown or extra text.\n"
+        "Required schema:\n"
+        "{"
+        '"dishName": string,'
+        '"totalWeight": number,'
+        '"totalMacros": {"calories": number, "protein": number, "fat": number, "carbs": number, "fiber": number},'
+        '"ingredients": ['
+        '{"name": string, "quantity": number, "weightPerUnit": number, "macrosPer100g": {"calories": number, "protein": number, "fat": number, "carbs": number}}'
+        "]"
+        "}\n"
+        "All numbers must be positive. Do not add fields outside this schema."
+    )
+
+
+def _normalize_max_output_tokens(value: int) -> int:
+    if value < 200:
+        return 200
+    if value > 4096:
+        return 4096
+    return value
+
+
 @router.post("/chat", response_model=OpenAIChatResponse)
 def chat(payload: OpenAIChatRequest) -> OpenAIChatResponse:
     _assert_openai_installed()
@@ -350,13 +385,62 @@ def chat(payload: OpenAIChatRequest) -> OpenAIChatResponse:
         text=_extract_text(response),
     )
 
+@router.post("/self-add-food", response_model=FoodAnalysisResponse)
+async def self_add_food(
+    food: list[SelfAddFoodRequest],
+    language: str = Form(..., min_length=2, max_length=8),
+    model: str | None = Form(default=None, min_length=1),
+) -> FoodAnalysisResponse:
+    _assert_openai_installed()
+    _assert_credentials()
 
-@router.post("/food-photo", response_model=FoodPhotoAnalysisResponse)
+    language_code, language_name = _resolve_language_code(language)
+
+    if not food:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="food array is required",
+        )
+
+    model_name = model or settings.OPENAI_FOOD_PHOTO_MODEL or settings.OPENAI_MODEL
+    max_output_tokens = _normalize_max_output_tokens(
+        settings.OPENAI_SELF_ADD_FOOD_MAX_OUTPUT_TOKENS
+    )
+    client = _create_openai_client()
+    request_params: dict[str, Any] = {
+        "model": model_name,
+        "max_output_tokens": max_output_tokens,
+        "input": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": _self_add_food_instructions(language_code, language_name, food),
+                    }
+                ],
+            }
+        ],
+    }
+    response = _create_openai_response(client, request_params, max_output_token_retries=1)
+    raw_text = _extract_text(response)
+    parsed_response = _extract_json_object(raw_text)
+
+    try:
+        return FoodAnalysisResponse.model_validate(parsed_response)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OpenAI returned invalid nutrition format",
+        ) from exc
+
+
+@router.post("/food-photo", response_model=FoodAnalysisResponse)
 async def food_photo(
     file: UploadFile = File(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
-) -> FoodPhotoAnalysisResponse:
+) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
 
@@ -390,11 +474,7 @@ async def food_photo(
 
     data_uri = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
     model_name = model or settings.OPENAI_FOOD_PHOTO_MODEL or settings.OPENAI_MODEL
-    max_output_tokens = settings.OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS
-    if max_output_tokens < 200:
-        max_output_tokens = 200
-    if max_output_tokens > 4096:
-        max_output_tokens = 4096
+    max_output_tokens = _normalize_max_output_tokens(settings.OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS)
     client = _create_openai_client()
     request_params: dict[str, Any] = {
         "model": model_name,
@@ -417,7 +497,7 @@ async def food_photo(
     parsed_response = _extract_json_object(raw_text)
 
     try:
-        return FoodPhotoAnalysisResponse.model_validate(parsed_response)
+        return FoodAnalysisResponse.model_validate(parsed_response)
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

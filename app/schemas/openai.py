@@ -38,8 +38,13 @@ class DishIngredient(CamelModel):
     macros_per_100g: IngredientMacrosPer100g
 
 
-class FoodPhotoAnalysisResponse(CamelModel):
+class FoodAnalysisResponse(CamelModel):
     dish_name: str = Field(min_length=1, max_length=300)
     total_weight: float = Field(gt=0)
     total_macros: TotalMacros
     ingredients: list[DishIngredient] = Field(min_length=1, max_length=30)
+
+class SelfAddFoodRequest(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+    weight_per_unit: float = Field(gt=0)
+    additional_information: str = Field(max_length=5000)
