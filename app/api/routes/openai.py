@@ -387,16 +387,27 @@ def chat(payload: OpenAIChatRequest) -> OpenAIChatResponse:
 
 @router.post("/self-add-food", response_model=FoodAnalysisResponse)
 async def self_add_food(
-    food: list[SelfAddFoodRequest],
+    food: str = Form(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
 
+    try:
+        food_raw = json.loads(food)
+        if not isinstance(food_raw, list):
+            food_raw = [food_raw]
+        parsed_food = [SelfAddFoodRequest.model_validate(item) for item in food_raw]
+    except (json.JSONDecodeError, Exception) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid food data: {exc}",
+        ) from exc
+
     language_code, language_name = _resolve_language_code(language)
 
-    if not food:
+    if not parsed_food:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="food array is required",
@@ -416,7 +427,7 @@ async def self_add_food(
                 "content": [
                     {
                         "type": "input_text",
-                        "text": _self_add_food_instructions(language_code, language_name, food),
+                        "text": _self_add_food_instructions(language_code, language_name, parsed_food),
                     }
                 ],
             }
