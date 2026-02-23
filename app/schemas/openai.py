@@ -14,3 +14,32 @@ class OpenAIChatRequest(CamelModel):
 class OpenAIChatResponse(CamelModel):
     model: str
     text: str
+
+
+class IngredientMacrosPer100g(CamelModel):
+    calories: float
+    protein: float
+    fat: float
+    carbs: float
+
+
+class TotalMacros(CamelModel):
+    calories: float
+    protein: float
+    fat: float
+    carbs: float
+    fiber: float
+
+
+class DishIngredient(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+    quantity: float = Field(gt=0)
+    weight_per_unit: float = Field(gt=0)
+    macros_per_100g: IngredientMacrosPer100g
+
+
+class FoodPhotoAnalysisResponse(CamelModel):
+    dish_name: str = Field(min_length=1, max_length=300)
+    total_weight: float = Field(gt=0)
+    total_macros: TotalMacros
+    ingredients: list[DishIngredient] = Field(min_length=1, max_length=30)
