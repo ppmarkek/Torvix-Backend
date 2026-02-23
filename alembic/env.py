@@ -7,6 +7,7 @@ from sqlmodel import SQLModel
 from app.core.config import settings
 import app.models.user
 import app.models.auth_session
+import app.models.statistics
 
 config = context.config
 
