@@ -63,8 +63,10 @@ def test_openai_food_photo_success(monkeypatch) -> None:
     "calories": 480,
     "protein": 25.5,
     "fat": 40.2,
+    "fatSaturated": 12.4,
     "carbs": 18.5,
-    "fiber": 2.1
+    "fiber": 2.1,
+    "sugar": 3.8
   },
   "ingredients": [
     {
@@ -106,9 +108,13 @@ def test_openai_food_photo_success(monkeypatch) -> None:
     assert body["dishName"] == "Яичница с беконом и тостами"
     assert body["totalWeight"] == 250
     assert body["totalMacros"]["calories"] == 480
+    assert body["totalMacros"]["fatSaturated"] == 12.4
+    assert body["totalMacros"]["sugar"] == 3.8
     assert body["ingredients"][0]["name"] == "Яйцо куриное жареное"
     assert captured_request["model"] == "gpt-5.2"
     assert "ru" in captured_request["input"][0]["content"][0]["text"]
+    assert "fatSaturated" in captured_request["input"][0]["content"][0]["text"]
+    assert "sugar" in captured_request["input"][0]["content"][0]["text"]
     assert captured_request["input"][0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
 
 

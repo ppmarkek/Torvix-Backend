@@ -27,8 +27,10 @@ class TotalMacros(CamelModel):
     calories: float
     protein: float
     fat: float
+    fat_saturated: float
     carbs: float
     fiber: float
+    sugar: float
 
 
 class DishIngredient(CamelModel):

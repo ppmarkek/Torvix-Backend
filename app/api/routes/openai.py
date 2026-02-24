@@ -316,7 +316,7 @@ def _food_photo_instructions(language_code: str, language_name: str) -> str:
         "{"
         '"dishName": string,'
         '"totalWeight": number,'
-        '"totalMacros": {"calories": number, "protein": number, "fat": number, "carbs": number, "fiber": number},'
+        '"totalMacros": {"calories": number, "protein": number, "fat": number, "fatSaturated": number, "carbs": number, "fiber": number, "sugar": number},'
         '"ingredients": ['
         '{"name": string, "quantity": number, "weightPerUnit": number, "macrosPer100g": {"calories": number, "protein": number, "fat": number, "carbs": number}}'
         "]"
@@ -343,7 +343,7 @@ def _self_add_food_instructions(
         "{"
         '"dishName": string,'
         '"totalWeight": number,'
-        '"totalMacros": {"calories": number, "protein": number, "fat": number, "carbs": number, "fiber": number},'
+        '"totalMacros": {"calories": number, "protein": number, "fat": number, "fatSaturated": number, "carbs": number, "fiber": number, "sugar": number},'
         '"ingredients": ['
         '{"name": string, "quantity": number, "weightPerUnit": number, "macrosPer100g": {"calories": number, "protein": number, "fat": number, "carbs": number}}'
         "]"
