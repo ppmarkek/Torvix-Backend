@@ -173,6 +173,75 @@ def get_daily_meals(
     )
 
 
+@router.delete("/days/{day}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_day(
+    day: date,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> None:
+    user_id = _require_user_id(current_user)
+    day_statement = select(StatisticsDay).where(
+        StatisticsDay.user_id == user_id,
+        StatisticsDay.day == day,
+    )
+    statistics_day = session.exec(day_statement).first()
+    if statistics_day is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Statistics day not found",
+        )
+
+    meals_statement = select(MealEntry).where(MealEntry.statistics_day_id == statistics_day.id)
+    meals = session.exec(meals_statement).all()
+    for meal in meals:
+        session.delete(meal)
+    session.delete(statistics_day)
+    session.commit()
+
+
+@router.delete("/days/{day}/meals/{meal_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_daily_meal(
+    day: date,
+    meal_id: int,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> None:
+    user_id = _require_user_id(current_user)
+    day_statement = select(StatisticsDay).where(
+        StatisticsDay.user_id == user_id,
+        StatisticsDay.day == day,
+    )
+    statistics_day = session.exec(day_statement).first()
+    if statistics_day is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Statistics day not found",
+        )
+
+    meal_statement = select(MealEntry).where(
+        MealEntry.id == meal_id,
+        MealEntry.user_id == user_id,
+        MealEntry.statistics_day_id == statistics_day.id,
+    )
+    meal = session.exec(meal_statement).first()
+    if meal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Meal not found in this day",
+        )
+
+    session.delete(meal)
+    remaining_statement = select(MealEntry).where(
+        MealEntry.user_id == user_id,
+        MealEntry.statistics_day_id == statistics_day.id,
+        MealEntry.id != meal_id,
+    )
+    has_remaining = session.exec(remaining_statement).first() is not None
+    if not has_remaining:
+        session.delete(statistics_day)
+    session.commit()
+
+
 @router.get("/dish-names", response_model=DishNamesRead)
 def get_dish_names(
     session: SessionDep,

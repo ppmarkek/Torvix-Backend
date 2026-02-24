@@ -164,3 +164,111 @@ def test_dish_names_and_get_meals_by_dish_name(client_with_stats_db: TestClient)
     missing_response = client_with_stats_db.get("/stats/dishes", params={"dishName": "Soup"})
     assert missing_response.status_code == 404
     assert missing_response.json() == {"detail": "No meals found for dishName"}
+
+
+def test_delete_day_removes_all_meals(client_with_stats_db: TestClient) -> None:
+    payloads = [
+        {
+            "time": "2026-02-20T08:30:00",
+            "dishName": "Soup",
+            "totalWeight": 250,
+            "totalMacros": {
+                "calories": 220,
+                "protein": 10,
+                "fat": 7,
+                "carbs": 28,
+                "fiber": 3,
+            },
+            "ingredients": [],
+        },
+        {
+            "time": "2026-02-20T12:10:00",
+            "dishName": "Rice",
+            "totalWeight": 200,
+            "totalMacros": {
+                "calories": 260,
+                "protein": 5,
+                "fat": 3,
+                "carbs": 52,
+                "fiber": 1,
+            },
+            "ingredients": [],
+        },
+    ]
+    for payload in payloads:
+        response = client_with_stats_db.post("/stats/meals", json=payload)
+        assert response.status_code == 201
+
+    delete_response = client_with_stats_db.delete("/stats/days/2026-02-20")
+    assert delete_response.status_code == 204
+
+    day_response = client_with_stats_db.get("/stats/days/2026-02-20/meals")
+    assert day_response.status_code == 200
+    assert day_response.json() == {"day": "2026-02-20", "meals": []}
+
+    second_delete = client_with_stats_db.delete("/stats/days/2026-02-20")
+    assert second_delete.status_code == 404
+    assert second_delete.json() == {"detail": "Statistics day not found"}
+
+
+def test_delete_single_meal_in_day(client_with_stats_db: TestClient) -> None:
+    first_payload = {
+        "time": "2026-02-24T08:30:00",
+        "dishName": "Toast",
+        "totalWeight": 120,
+        "totalMacros": {
+            "calories": 290,
+            "protein": 8,
+            "fat": 9,
+            "carbs": 41,
+            "fiber": 2,
+        },
+        "ingredients": [],
+    }
+    second_payload = {
+        "time": "2026-02-24T13:00:00",
+        "dishName": "Fish",
+        "totalWeight": 180,
+        "totalMacros": {
+            "calories": 310,
+            "protein": 33,
+            "fat": 16,
+            "carbs": 3,
+            "fiber": 0,
+        },
+        "ingredients": [],
+    }
+
+    first_meal = client_with_stats_db.post("/stats/meals", json=first_payload)
+    assert first_meal.status_code == 201
+    first_meal_id = first_meal.json()["id"]
+
+    second_meal = client_with_stats_db.post("/stats/meals", json=second_payload)
+    assert second_meal.status_code == 201
+    second_meal_id = second_meal.json()["id"]
+
+    delete_first = client_with_stats_db.delete(
+        f"/stats/days/2026-02-24/meals/{first_meal_id}"
+    )
+    assert delete_first.status_code == 204
+
+    day_after_first_delete = client_with_stats_db.get("/stats/days/2026-02-24/meals")
+    assert day_after_first_delete.status_code == 200
+    day_body = day_after_first_delete.json()
+    assert len(day_body["meals"]) == 1
+    assert day_body["meals"][0]["id"] == second_meal_id
+
+    missing_meal_delete = client_with_stats_db.delete(
+        f"/stats/days/2026-02-24/meals/{first_meal_id}"
+    )
+    assert missing_meal_delete.status_code == 404
+    assert missing_meal_delete.json() == {"detail": "Meal not found in this day"}
+
+    delete_second = client_with_stats_db.delete(
+        f"/stats/days/2026-02-24/meals/{second_meal_id}"
+    )
+    assert delete_second.status_code == 204
+
+    empty_day = client_with_stats_db.get("/stats/days/2026-02-24/meals")
+    assert empty_day.status_code == 200
+    assert empty_day.json() == {"day": "2026-02-24", "meals": []}
