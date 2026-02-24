@@ -388,10 +388,10 @@ def chat(payload: OpenAIChatRequest) -> OpenAIChatResponse:
 
 @router.post("/self-add-food", response_model=FoodAnalysisResponse)
 async def self_add_food(
+    current_user: CurrentUserDep,
     food: str = Form(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
-    current_user: CurrentUserDep,
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
@@ -450,10 +450,10 @@ async def self_add_food(
 
 @router.post("/food-photo", response_model=FoodAnalysisResponse)
 async def food_photo(
+    current_user: CurrentUserDep,
     file: UploadFile = File(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
-    current_user: CurrentUserDep,
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
