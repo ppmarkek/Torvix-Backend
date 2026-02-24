@@ -4,7 +4,7 @@ import base64
 import json
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 
 try:
@@ -22,6 +22,7 @@ except ImportError:
     BadRequestError = RateLimitError = Exception
     OpenAI = None
 
+from app.api.routes.auth import CurrentUserDep
 from app.core.config import settings
 from app.schemas.openai import (
     FoodAnalysisResponse,
@@ -390,6 +391,7 @@ async def self_add_food(
     food: str = Form(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
+    current_user: CurrentUserDep = Depends(),
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
@@ -451,6 +453,7 @@ async def food_photo(
     file: UploadFile = File(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
+    current_user: CurrentUserDep = Depends(),
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
