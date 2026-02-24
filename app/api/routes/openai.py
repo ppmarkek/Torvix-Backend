@@ -391,7 +391,7 @@ async def self_add_food(
     food: str = Form(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
-    current_user: CurrentUserDep = Depends(),
+    current_user: CurrentUserDep,
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
@@ -453,7 +453,7 @@ async def food_photo(
     file: UploadFile = File(...),
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
-    current_user: CurrentUserDep = Depends(),
+    current_user: CurrentUserDep,
 ) -> FoodAnalysisResponse:
     _assert_openai_installed()
     _assert_credentials()
