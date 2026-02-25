@@ -33,12 +33,5 @@ services:
       retries: 10
       start_period: 5s
 
-  adminer:
-    image: adminer:latest
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "8082:8080"
 volumes:
   torvix_pg:
