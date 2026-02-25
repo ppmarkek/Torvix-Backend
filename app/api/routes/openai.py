@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -32,6 +34,7 @@ from app.schemas.openai import (
 )
 
 router = APIRouter(prefix="/api/openai", tags=["openai"])
+logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 SUPPORTED_IMAGE_CONTENT_TYPES = {
     "image/jpeg",
@@ -83,7 +86,15 @@ def _create_openai_client() -> Any:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="openai package is not installed. Run `poetry install`.",
         )
-    return OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+    max_retries = settings.OPENAI_MAX_RETRIES
+    if max_retries < 0:
+        max_retries = 0
+    return OpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        base_url=settings.OPENAI_BASE_URL,
+        timeout=settings.OPENAI_TIMEOUT_SECONDS,
+        max_retries=max_retries,
+    )
 
 
 def _assert_credentials() -> None:
@@ -455,6 +466,7 @@ async def food_photo(
     language: str = Form(..., min_length=2, max_length=8),
     model: str | None = Form(default=None, min_length=1),
 ) -> FoodAnalysisResponse:
+    started_at = time.perf_counter()
     _assert_openai_installed()
     _assert_credentials()
 
@@ -489,6 +501,14 @@ async def food_photo(
     data_uri = f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
     model_name = model or settings.OPENAI_FOOD_PHOTO_MODEL or settings.OPENAI_MODEL
     max_output_tokens = _normalize_max_output_tokens(settings.OPENAI_FOOD_PHOTO_MAX_OUTPUT_TOKENS)
+    logger.info(
+        "food-photo request accepted user_id=%s language=%s content_type=%s image_bytes=%s model=%s",
+        current_user.id,
+        language_code,
+        content_type,
+        len(image_bytes),
+        model_name,
+    )
     client = _create_openai_client()
     request_params: dict[str, Any] = {
         "model": model_name,
@@ -506,7 +526,22 @@ async def food_photo(
             }
         ],
     }
-    response = _create_openai_response(client, request_params, max_output_token_retries=1)
+    openai_started_at = time.perf_counter()
+    try:
+        response = _create_openai_response(client, request_params, max_output_token_retries=1)
+    except HTTPException as exc:
+        logger.warning(
+            "food-photo failed status=%s detail=%s elapsed=%.2fs",
+            exc.status_code,
+            exc.detail,
+            time.perf_counter() - started_at,
+        )
+        raise
+    logger.info(
+        "food-photo OpenAI call finished openai_elapsed=%.2fs total_elapsed=%.2fs",
+        time.perf_counter() - openai_started_at,
+        time.perf_counter() - started_at,
+    )
     raw_text = _extract_text(response)
     parsed_response = _extract_json_object(raw_text)
 

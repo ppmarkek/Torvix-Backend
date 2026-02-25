@@ -26,5 +26,7 @@ class Settings(BaseModel):
         os.getenv("OPENAI_SELF_ADD_FOOD_MAX_OUTPUT_TOKENS", "1200")
     )
     OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    OPENAI_TIMEOUT_SECONDS: float = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "20"))
+    OPENAI_MAX_RETRIES: int = int(os.getenv("OPENAI_MAX_RETRIES", "0"))
 
 settings = Settings()
