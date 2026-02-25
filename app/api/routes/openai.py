@@ -170,6 +170,7 @@ def _create_openai_response(
             return response
         except BadRequestError as exc:
             message = _bad_request_detail(exc)
+            logger.error("OpenAI BadRequestError: %s | body=%s", message, getattr(exc, 'body', None))
             if "Unsupported parameter: 'temperature'" in message and "temperature" in effective_params:
                 effective_params.pop("temperature", None)
                 continue
@@ -178,29 +179,34 @@ def _create_openai_response(
                 detail=message,
             ) from exc
         except AuthenticationError as exc:
+            logger.error("OpenAI AuthenticationError: %s | status=%s | body=%s", exc, getattr(exc, 'status_code', None), getattr(exc, 'body', None))
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="OpenAI authentication failed",
+                detail=f"OpenAI authentication failed: {exc}",
             ) from exc
         except RateLimitError as exc:
+            logger.error("OpenAI RateLimitError: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="OpenAI rate limit exceeded",
             ) from exc
         except APITimeoutError as exc:
+            logger.error("OpenAI APITimeoutError: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="OpenAI request timed out",
             ) from exc
         except APIConnectionError as exc:
+            logger.error("OpenAI APIConnectionError: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Cannot reach OpenAI API",
+                detail=f"Cannot reach OpenAI API: {exc}",
             ) from exc
         except APIError as exc:
+            logger.error("OpenAI APIError: %s | status=%s | body=%s", exc, getattr(exc, 'status_code', None), getattr(exc, 'body', None))
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="OpenAI API request failed",
+                detail=f"OpenAI API request failed: {exc}",
             ) from exc
 
 
