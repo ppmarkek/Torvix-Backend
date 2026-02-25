@@ -12,6 +12,7 @@ from app.api.routes.auth import CurrentUserDep
 from app.db.session import get_session
 from app.models.statistics import MealEntry, StatisticsDay
 from app.schemas.statistics import (
+    DishNameRead,
     DishNamesRead,
     MealCreate,
     MealIngredient,
@@ -191,7 +192,10 @@ def delete_day(
             detail="Statistics day not found",
         )
 
-    meals_statement = select(MealEntry).where(MealEntry.statistics_day_id == statistics_day.id)
+    meals_statement = select(MealEntry).where(
+        MealEntry.statistics_day_id == statistics_day.id,
+        MealEntry.user_id == user_id,
+    )
     meals = session.exec(meals_statement).all()
     for meal in meals:
         session.delete(meal)
@@ -248,50 +252,45 @@ def get_dish_names(
     current_user: CurrentUserDep,
 ) -> DishNamesRead:
     user_id = _require_user_id(current_user)
-    distinct_dish_names = (
-        select(MealEntry.dish_name)
-        .where(MealEntry.user_id == user_id)
-        .distinct()
-        .subquery()
-    )
     statement = (
-        select(distinct_dish_names.c.dish_name)
-        .order_by(func.lower(distinct_dish_names.c.dish_name))
+        select(MealEntry)
+        .where(MealEntry.user_id == user_id)
+        .order_by(func.lower(MealEntry.dish_name), MealEntry.time.desc(), MealEntry.id.desc())
     )
-    dish_names = session.exec(statement).all()
-    return DishNamesRead(dish_names=[name for name in dish_names if isinstance(name, str)])
+    meals = session.exec(statement).all()
+    dish_names: list[DishNameRead] = []
+    for meal in meals:
+        if meal.id is None:
+            continue
+        dish_names.append(
+            DishNameRead(
+                id=meal.id,
+                dish_name=meal.dish_name,
+            )
+        )
+    return DishNamesRead(dish_names=dish_names)
 
 
 @router.get("/dishes", response_model=MealsByDishRead)
-def get_meals_by_dish_name(
-    dish_name: Annotated[str, Query(alias="dishName", min_length=1, max_length=300)],
+def get_meals_by_dish_id(
+    dish_id: Annotated[int, Query(alias="dishId", gt=0)],
     session: SessionDep,
     current_user: CurrentUserDep,
 ) -> MealsByDishRead:
     user_id = _require_user_id(current_user)
-    normalized_dish_name = dish_name.strip()
-    if not normalized_dish_name:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="dishName must not be empty",
-        )
-
-    statement = (
-        select(MealEntry)
-        .where(
-            MealEntry.user_id == user_id,
-            func.lower(MealEntry.dish_name) == normalized_dish_name.lower(),
-        )
-        .order_by(MealEntry.time.desc(), MealEntry.id.desc())
+    statement = select(MealEntry).where(
+        MealEntry.user_id == user_id,
+        MealEntry.id == dish_id,
     )
-    meals = session.exec(statement).all()
-    if not meals:
+    meal = session.exec(statement).first()
+    if meal is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No meals found for dishName",
+            detail="Dish not found",
         )
 
     return MealsByDishRead(
-        dish_name=meals[0].dish_name,
-        meals=[_serialize_meal(meal) for meal in meals],
+        dish_id=dish_id,
+        dish_name=meal.dish_name,
+        meals=[_serialize_meal(meal)],
     )

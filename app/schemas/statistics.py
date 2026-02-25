@@ -56,10 +56,16 @@ class StatisticsRead(CamelModel):
     days: list[StatisticsDayRead]
 
 
+class DishNameRead(CamelModel):
+    id: int
+    dish_name: str
+
+
 class DishNamesRead(CamelModel):
-    dish_names: list[str]
+    dish_names: list[DishNameRead]
 
 
 class MealsByDishRead(CamelModel):
+    dish_id: int
     dish_name: str
     meals: list[MealRead]

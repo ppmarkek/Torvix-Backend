@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +44,58 @@ def client_with_stats_db() -> Iterator[TestClient]:
 
     with TestClient(app) as client:
         yield client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_with_multi_user_stats_db() -> Iterator[tuple[TestClient, Callable[[str], None]]]:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+
+    first_email = "stats-one@test.dev"
+    second_email = "stats-two@test.dev"
+    with Session(engine) as session:
+        session.add(
+            User(
+                email=first_email,
+                name="Stats User One",
+                password_hash="hashed",
+            )
+        )
+        session.add(
+            User(
+                email=second_email,
+                name="Stats User Two",
+                password_hash="hashed",
+            )
+        )
+        session.commit()
+
+    current_email = {"value": first_email}
+
+    def set_current_user(email: str) -> None:
+        current_email["value"] = email
+
+    def get_test_session():
+        with Session(engine) as session:
+            yield session
+
+    def get_test_user() -> User:
+        with Session(engine) as session:
+            user = session.exec(select(User).where(User.email == current_email["value"])).first()
+            assert user is not None
+            return user
+
+    app.dependency_overrides[get_session] = get_test_session
+    app.dependency_overrides[get_current_user] = get_test_user
+
+    with TestClient(app) as client:
+        yield client, set_current_user
 
     app.dependency_overrides.clear()
 
@@ -105,7 +157,7 @@ def test_create_meal_and_get_daily_statistics(client_with_stats_db: TestClient) 
     assert empty_daily_response.json() == {"day": "2026-02-21", "meals": []}
 
 
-def test_dish_names_and_get_meals_by_dish_name(client_with_stats_db: TestClient) -> None:
+def test_dish_names_and_get_meals_by_dish_id(client_with_stats_db: TestClient) -> None:
     payloads = [
         {
             "time": "2026-02-22T08:30:00",
@@ -147,23 +199,36 @@ def test_dish_names_and_get_meals_by_dish_name(client_with_stats_db: TestClient)
             "ingredients": [],
         },
     ]
+    created_ids: list[int] = []
     for payload in payloads:
         response = client_with_stats_db.post("/stats/meals", json=payload)
         assert response.status_code == 201
+        created_ids.append(response.json()["id"])
 
     dish_names_response = client_with_stats_db.get("/stats/dish-names")
     assert dish_names_response.status_code == 200
-    assert dish_names_response.json() == {"dishNames": ["Pasta", "Salad"]}
+    assert dish_names_response.json() == {
+        "dishNames": [
+            {"id": created_ids[1], "dishName": "Pasta"},
+            {"id": created_ids[0], "dishName": "Pasta"},
+            {"id": created_ids[2], "dishName": "Salad"},
+        ]
+    }
 
-    by_dish_response = client_with_stats_db.get("/stats/dishes", params={"dishName": "pasta"})
+    by_dish_response = client_with_stats_db.get(
+        "/stats/dishes",
+        params={"dishId": created_ids[1]},
+    )
     assert by_dish_response.status_code == 200
     by_dish_body = by_dish_response.json()
+    assert by_dish_body["dishId"] == created_ids[1]
     assert by_dish_body["dishName"] == "Pasta"
-    assert len(by_dish_body["meals"]) == 2
+    assert len(by_dish_body["meals"]) == 1
+    assert by_dish_body["meals"][0]["id"] == created_ids[1]
 
-    missing_response = client_with_stats_db.get("/stats/dishes", params={"dishName": "Soup"})
+    missing_response = client_with_stats_db.get("/stats/dishes", params={"dishId": 999999})
     assert missing_response.status_code == 404
-    assert missing_response.json() == {"detail": "No meals found for dishName"}
+    assert missing_response.json() == {"detail": "Dish not found"}
 
 
 def test_delete_day_removes_all_meals(client_with_stats_db: TestClient) -> None:
@@ -272,3 +337,75 @@ def test_delete_single_meal_in_day(client_with_stats_db: TestClient) -> None:
     empty_day = client_with_stats_db.get("/stats/days/2026-02-24/meals")
     assert empty_day.status_code == 200
     assert empty_day.json() == {"day": "2026-02-24", "meals": []}
+
+
+def test_stats_are_isolated_per_user(
+    client_with_multi_user_stats_db: tuple[TestClient, Callable[[str], None]]
+) -> None:
+    client, set_current_user = client_with_multi_user_stats_db
+
+    first_user_email = "stats-one@test.dev"
+    second_user_email = "stats-two@test.dev"
+    day_value = "2026-02-25"
+
+    set_current_user(first_user_email)
+    first_create = client.post(
+        "/stats/meals",
+        json={
+            "time": f"{day_value}T08:00:00",
+            "dishName": "User One Meal",
+            "totalWeight": 250,
+            "totalMacros": {
+                "calories": 350,
+                "protein": 20,
+                "fat": 10,
+                "carbs": 40,
+                "fiber": 5,
+            },
+            "ingredients": [],
+        },
+    )
+    assert first_create.status_code == 201
+    first_meal_id = first_create.json()["id"]
+
+    set_current_user(second_user_email)
+    second_create = client.post(
+        "/stats/meals",
+        json={
+            "time": f"{day_value}T12:00:00",
+            "dishName": "User Two Meal",
+            "totalWeight": 300,
+            "totalMacros": {
+                "calories": 420,
+                "protein": 28,
+                "fat": 14,
+                "carbs": 45,
+                "fiber": 6,
+            },
+            "ingredients": [],
+        },
+    )
+    assert second_create.status_code == 201
+
+    first_user_delete_attempt = client.delete(
+        f"/stats/days/{day_value}/meals/{first_meal_id}"
+    )
+    assert first_user_delete_attempt.status_code == 404
+
+    set_current_user(first_user_email)
+    first_day = client.get(f"/stats/days/{day_value}/meals")
+    assert first_day.status_code == 200
+    first_day_meals = first_day.json()["meals"]
+    assert len(first_day_meals) == 1
+    assert first_day_meals[0]["id"] == first_meal_id
+    assert first_day_meals[0]["dishName"] == "User One Meal"
+
+    delete_first_day = client.delete(f"/stats/days/{day_value}")
+    assert delete_first_day.status_code == 204
+
+    set_current_user(second_user_email)
+    second_day = client.get(f"/stats/days/{day_value}/meals")
+    assert second_day.status_code == 200
+    second_day_meals = second_day.json()["meals"]
+    assert len(second_day_meals) == 1
+    assert second_day_meals[0]["dishName"] == "User Two Meal"
