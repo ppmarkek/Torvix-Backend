@@ -248,11 +248,15 @@ def get_dish_names(
     current_user: CurrentUserDep,
 ) -> DishNamesRead:
     user_id = _require_user_id(current_user)
-    statement = (
+    distinct_dish_names = (
         select(MealEntry.dish_name)
         .where(MealEntry.user_id == user_id)
         .distinct()
-        .order_by(func.lower(MealEntry.dish_name))
+        .subquery()
+    )
+    statement = (
+        select(distinct_dish_names.c.dish_name)
+        .order_by(func.lower(distinct_dish_names.c.dish_name))
     )
     dish_names = session.exec(statement).all()
     return DishNamesRead(dish_names=[name for name in dish_names if isinstance(name, str)])
