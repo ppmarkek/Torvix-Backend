@@ -101,6 +101,7 @@ FOOD_ANALYSIS_JSON_SCHEMA: dict[str, Any] = {
         "ingredients": {
             "type": "array",
             "minItems": 1,
+            "maxItems": 12,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -149,7 +150,7 @@ def _create_openai_client() -> Any:
     return OpenAI(
         api_key=settings.OPENAI_API_KEY,
         base_url=settings.OPENAI_BASE_URL,
-        timeout=settings.OPENAI_TIMEOUT_SECONDS,
+        timeout=None,
         max_retries=max_retries,
     )
 
@@ -206,7 +207,8 @@ def _food_analysis_text_config() -> dict[str, Any]:
             "name": "food_analysis",
             "strict": True,
             "schema": FOOD_ANALYSIS_JSON_SCHEMA,
-        }
+        },
+        "verbosity": "low",
     }
 
 
@@ -243,7 +245,7 @@ def _create_openai_response(
                 and isinstance(effective_params.get("max_output_tokens"), int)
             ):
                 current_limit = effective_params["max_output_tokens"]
-                next_limit = min(max(current_limit + 400, int(current_limit * 1.5)), 4096)
+                next_limit = min(max(current_limit + 800, int(current_limit * 2)), 4096)
                 if next_limit > current_limit:
                     effective_params["max_output_tokens"] = next_limit
                     retries_left -= 1
@@ -379,6 +381,14 @@ def _extract_text(response: Any) -> str:
         if isinstance(incomplete_details, dict):
             reason = incomplete_details.get("reason")
             if isinstance(reason, str) and reason:
+                if reason == "max_output_tokens":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=(
+                            "Image analysis exceeded output token budget. "
+                            "Try a simpler photo or fewer visible ingredients."
+                        ),
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=f"OpenAI returned no text output (status={response_status}, reason={reason})",
@@ -449,6 +459,7 @@ def _food_photo_instructions(language_code: str, language_name: str) -> str:
         '{"name": string, "quantity": number, "weightPerUnit": number, "macrosPer100g": {"calories": number, "protein": number, "fat": number, "carbs": number}}'
         "]"
         "}\n"
+        "Include up to 12 most significant ingredients.\n"
         "All numbers must be positive. Do not add fields outside this schema."
     )
 
@@ -476,6 +487,7 @@ def _self_add_food_instructions(
         '{"name": string, "quantity": number, "weightPerUnit": number, "macrosPer100g": {"calories": number, "protein": number, "fat": number, "carbs": number}}'
         "]"
         "}\n"
+        "Include up to 12 most significant ingredients.\n"
         "All numbers must be positive. Do not add fields outside this schema."
     )
 
@@ -563,7 +575,7 @@ async def self_add_food(
             }
         ],
     }
-    response = _create_openai_response(client, request_params, max_output_token_retries=1)
+    response = _create_openai_response(client, request_params, max_output_token_retries=2)
     raw_text = _extract_text(response)
     parsed_response = _extract_json_object(raw_text)
 
@@ -646,7 +658,7 @@ async def food_photo(
     }
     openai_started_at = time.perf_counter()
     try:
-        response = _create_openai_response(client, request_params, max_output_token_retries=1)
+        response = _create_openai_response(client, request_params, max_output_token_retries=2)
     except HTTPException as exc:
         logger.warning(
             "food-photo failed status=%s detail=%s elapsed=%.2fs",

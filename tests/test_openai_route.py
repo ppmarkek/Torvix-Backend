@@ -193,3 +193,45 @@ def test_create_openai_response_propagates_upstream_4xx(monkeypatch) -> None:
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Project has no access to this model"
+
+
+def test_create_openai_response_retries_with_higher_max_output_tokens() -> None:
+    class FakeResponse:
+        def __init__(self, *, status: str, reason: str | None = None, text: str = "") -> None:
+            self.output_text = text
+            self.status = status
+            self.incomplete_details = {"reason": reason} if reason else None
+
+        def model_dump(self, exclude_none: bool = True) -> dict:
+            data = {
+                "status": self.status,
+                "output_text": self.output_text,
+                "incomplete_details": self.incomplete_details,
+            }
+            if exclude_none:
+                return {k: v for k, v in data.items() if v is not None}
+            return data
+
+    class FakeResponses:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs["max_output_tokens"])
+            if len(self.calls) == 1:
+                return FakeResponse(status="incomplete", reason="max_output_tokens")
+            return FakeResponse(status="completed", text='{"ok": true}')
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    client = FakeClient()
+    response = openai_route._create_openai_response(
+        client,
+        {"model": "gpt-5-mini", "input": "Hello", "max_output_tokens": 1200},
+        max_output_token_retries=2,
+    )
+
+    assert response.output_text == '{"ok": true}'
+    assert client.responses.calls == [1200, 2400]
