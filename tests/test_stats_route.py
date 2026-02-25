@@ -209,9 +209,9 @@ def test_dish_names_and_get_meals_by_dish_id(client_with_stats_db: TestClient) -
     assert dish_names_response.status_code == 200
     assert dish_names_response.json() == {
         "dishNames": [
-            {"id": created_ids[1], "dishName": "Pasta"},
-            {"id": created_ids[0], "dishName": "Pasta"},
-            {"id": created_ids[2], "dishName": "Salad"},
+            {"id": created_ids[1], "dishName": "Pasta", "kcal": 530.0},
+            {"id": created_ids[0], "dishName": "Pasta", "kcal": 510.0},
+            {"id": created_ids[2], "dishName": "Salad", "kcal": 190.0},
         ]
     }
 

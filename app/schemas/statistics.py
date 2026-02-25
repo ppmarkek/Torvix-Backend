@@ -59,6 +59,7 @@ class StatisticsRead(CamelModel):
 class DishNameRead(CamelModel):
     id: int
     dish_name: str
+    kcal: float | None = None
 
 
 class DishNamesRead(CamelModel):

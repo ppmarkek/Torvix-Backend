@@ -60,6 +60,13 @@ def _serialize_meal(meal: MealEntry) -> MealRead:
     )
 
 
+def _extract_kcal(meal: MealEntry) -> float | None:
+    calories = meal.total_macros.get("calories")
+    if isinstance(calories, (int, float)):
+        return float(calories)
+    return None
+
+
 @router.post("/meals", response_model=MealRead, status_code=status.HTTP_201_CREATED)
 def create_meal(
     payload: MealCreate,
@@ -266,6 +273,7 @@ def get_dish_names(
             DishNameRead(
                 id=meal.id,
                 dish_name=meal.dish_name,
+                kcal=_extract_kcal(meal),
             )
         )
     return DishNamesRead(dish_names=dish_names)
