@@ -1,10 +1,30 @@
+from collections.abc import Iterator
+
+import pytest
 from fastapi.testclient import TestClient
 
 import app.api.routes.openai as openai_route
+from app.api.routes.auth import get_current_user
 from app.core.config import settings
 from app.main import app
+from app.models.user import User
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def override_current_user() -> Iterator[None]:
+    def get_test_user() -> User:
+        return User(
+            id=1,
+            email="openai@test.dev",
+            name="OpenAI Tester",
+            password_hash="hashed",
+        )
+
+    app.dependency_overrides[get_current_user] = get_test_user
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_openai_chat_requires_api_key(monkeypatch) -> None:
@@ -115,6 +135,7 @@ def test_openai_food_photo_success(monkeypatch) -> None:
     assert "ru" in captured_request["input"][0]["content"][0]["text"]
     assert "fatSaturated" in captured_request["input"][0]["content"][0]["text"]
     assert "sugar" in captured_request["input"][0]["content"][0]["text"]
+    assert captured_request["text"]["format"]["type"] == "json_schema"
     assert captured_request["input"][0]["content"][1]["image_url"].startswith("data:image/jpeg;base64,")
 
 
@@ -128,3 +149,47 @@ def test_openai_food_photo_rejects_unsupported_language(monkeypatch) -> None:
 
     assert response.status_code == 422
     assert "Unsupported language code" in response.json()["detail"]
+
+
+def test_create_openai_response_maps_authentication_to_401(monkeypatch) -> None:
+    class FakeAuthenticationError(Exception):
+        status_code = 401
+        body = {"error": {"message": "Invalid API key"}}
+
+    class FakeResponses:
+        def create(self, **_kwargs):
+            raise FakeAuthenticationError("Invalid API key")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr(openai_route, "AuthenticationError", FakeAuthenticationError)
+
+    with pytest.raises(openai_route.HTTPException) as exc_info:
+        openai_route._create_openai_response(FakeClient(), {"model": "gpt-5-mini", "input": "Hello"})
+
+    assert exc_info.value.status_code == 401
+    assert "OpenAI authentication failed" in exc_info.value.detail
+
+
+def test_create_openai_response_propagates_upstream_4xx(monkeypatch) -> None:
+    class FakeAPIStatusError(Exception):
+        status_code = 403
+        body = {"error": {"message": "Project has no access to this model"}}
+
+    class FakeResponses:
+        def create(self, **_kwargs):
+            raise FakeAPIStatusError("Forbidden")
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr(openai_route, "APIStatusError", FakeAPIStatusError)
+
+    with pytest.raises(openai_route.HTTPException) as exc_info:
+        openai_route._create_openai_response(FakeClient(), {"model": "gpt-5-mini", "input": "Hello"})
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Project has no access to this model"

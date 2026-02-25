@@ -6,13 +6,14 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 
 try:
     from openai import (
         APIConnectionError,
         APIError,
+        APIStatusError,
         APITimeoutError,
         AuthenticationError,
         BadRequestError,
@@ -20,7 +21,7 @@ try:
         RateLimitError,
     )
 except ImportError:
-    APIConnectionError = APIError = APITimeoutError = AuthenticationError = Exception
+    APIConnectionError = APIError = APIStatusError = APITimeoutError = AuthenticationError = Exception
     BadRequestError = RateLimitError = Exception
     OpenAI = None
 
@@ -67,6 +68,62 @@ SUPPORTED_LANGUAGE_CODES = {
     "be": "Belarusian",
     "lt": "Lithuanian",
     "et": "Estonian",
+}
+FOOD_ANALYSIS_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["dishName", "totalWeight", "totalMacros", "ingredients"],
+    "properties": {
+        "dishName": {"type": "string"},
+        "totalWeight": {"type": "number"},
+        "totalMacros": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "calories",
+                "protein",
+                "fat",
+                "fatSaturated",
+                "carbs",
+                "fiber",
+                "sugar",
+            ],
+            "properties": {
+                "calories": {"type": "number"},
+                "protein": {"type": "number"},
+                "fat": {"type": "number"},
+                "fatSaturated": {"type": "number"},
+                "carbs": {"type": "number"},
+                "fiber": {"type": "number"},
+                "sugar": {"type": "number"},
+            },
+        },
+        "ingredients": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["name", "quantity", "weightPerUnit", "macrosPer100g"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "quantity": {"type": "number"},
+                    "weightPerUnit": {"type": "number"},
+                    "macrosPer100g": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["calories", "protein", "fat", "carbs"],
+                        "properties": {
+                            "calories": {"type": "number"},
+                            "protein": {"type": "number"},
+                            "fat": {"type": "number"},
+                            "carbs": {"type": "number"},
+                        },
+                    },
+                },
+            },
+        },
+    },
 }
 
 
@@ -142,6 +199,31 @@ def _incomplete_reason(response: Any) -> str | None:
     return "unknown"
 
 
+def _food_analysis_text_config() -> dict[str, Any]:
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": "food_analysis",
+            "strict": True,
+            "schema": FOOD_ANALYSIS_JSON_SCHEMA,
+        }
+    }
+
+
+def _drop_text_format_param(params: dict[str, Any]) -> bool:
+    text_config = params.get("text")
+    if not isinstance(text_config, dict) or "format" not in text_config:
+        return False
+
+    next_text_config = dict(text_config)
+    next_text_config.pop("format", None)
+    if next_text_config:
+        params["text"] = next_text_config
+    else:
+        params.pop("text", None)
+    return True
+
+
 def _create_openai_response(
     client: Any,
     request_params: dict[str, Any],
@@ -174,6 +256,16 @@ def _create_openai_response(
             if "Unsupported parameter: 'temperature'" in message and "temperature" in effective_params:
                 effective_params.pop("temperature", None)
                 continue
+            lowered_message = message.lower()
+            if (
+                (
+                    "unsupported parameter: 'text.format'" in lowered_message
+                    or "unsupported parameter: 'text'" in lowered_message
+                    or ("json_schema" in lowered_message and "unsupported" in lowered_message)
+                )
+                and _drop_text_format_param(effective_params)
+            ):
+                continue
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=message,
@@ -181,7 +273,7 @@ def _create_openai_response(
         except AuthenticationError as exc:
             logger.error("OpenAI AuthenticationError: %s | status=%s | body=%s", exc, getattr(exc, 'status_code', None), getattr(exc, 'body', None))
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
+                status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"OpenAI authentication failed: {exc}",
             ) from exc
         except RateLimitError as exc:
@@ -202,11 +294,29 @@ def _create_openai_response(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Cannot reach OpenAI API: {exc}",
             ) from exc
+        except APIStatusError as exc:
+            upstream_status = getattr(exc, "status_code", None)
+            message = _bad_request_detail(exc)
+            logger.error(
+                "OpenAI APIStatusError: %s | status=%s | body=%s",
+                message,
+                upstream_status,
+                getattr(exc, "body", None),
+            )
+            if isinstance(upstream_status, int) and 400 <= upstream_status < 500:
+                raise HTTPException(
+                    status_code=upstream_status,
+                    detail=message,
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"OpenAI API request failed: {message}",
+            ) from exc
         except APIError as exc:
             logger.error("OpenAI APIError: %s | status=%s | body=%s", exc, getattr(exc, 'status_code', None), getattr(exc, 'body', None))
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"OpenAI API request failed: {exc}",
+                detail=f"OpenAI API request failed: {_bad_request_detail(exc)}",
             ) from exc
 
 
@@ -440,6 +550,7 @@ async def self_add_food(
     request_params: dict[str, Any] = {
         "model": model_name,
         "max_output_tokens": max_output_tokens,
+        "text": _food_analysis_text_config(),
         "input": [
             {
                 "role": "user",
@@ -519,6 +630,7 @@ async def food_photo(
     request_params: dict[str, Any] = {
         "model": model_name,
         "max_output_tokens": max_output_tokens,
+        "text": _food_analysis_text_config(),
         "input": [
             {
                 "role": "user",
