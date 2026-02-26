@@ -136,25 +136,40 @@ def test_create_meal_and_get_daily_statistics(client_with_stats_db: TestClient) 
     assert created_meal["dishName"] == "Omelette"
     assert created_meal["totalMacros"]["fatSaturated"] == 8.4
     assert created_meal["ingredients"][0]["name"] == "Egg"
+    assert created_meal["createdAt"] is not None
+    assert created_meal["updatedAt"] is not None
 
     stats_response = client_with_stats_db.get("/stats")
     assert stats_response.status_code == 200
     body = stats_response.json()
     assert len(body["days"]) == 1
     assert body["days"][0]["day"] == "2026-02-22"
+    assert body["days"][0]["createdAt"] is not None
+    assert body["days"][0]["updatedAt"] is not None
     assert len(body["days"][0]["meals"]) == 1
     assert body["days"][0]["meals"][0]["dishName"] == "Omelette"
+    assert body["days"][0]["meals"][0]["createdAt"] is not None
+    assert body["days"][0]["meals"][0]["updatedAt"] is not None
 
     daily_response = client_with_stats_db.get("/stats/days/2026-02-22/meals")
     assert daily_response.status_code == 200
     daily_body = daily_response.json()
     assert daily_body["day"] == "2026-02-22"
+    assert daily_body["createdAt"] is not None
+    assert daily_body["updatedAt"] is not None
     assert len(daily_body["meals"]) == 1
     assert daily_body["meals"][0]["dishName"] == "Omelette"
+    assert daily_body["meals"][0]["createdAt"] is not None
+    assert daily_body["meals"][0]["updatedAt"] is not None
 
     empty_daily_response = client_with_stats_db.get("/stats/days/2026-02-21/meals")
     assert empty_daily_response.status_code == 200
-    assert empty_daily_response.json() == {"day": "2026-02-21", "meals": []}
+    assert empty_daily_response.json() == {
+        "day": "2026-02-21",
+        "meals": [],
+        "createdAt": None,
+        "updatedAt": None,
+    }
 
 
 def test_dish_names_and_get_meals_by_dish_id(client_with_stats_db: TestClient) -> None:
@@ -207,13 +222,19 @@ def test_dish_names_and_get_meals_by_dish_id(client_with_stats_db: TestClient) -
 
     dish_names_response = client_with_stats_db.get("/stats/dish-names")
     assert dish_names_response.status_code == 200
-    assert dish_names_response.json() == {
-        "dishNames": [
-            {"id": created_ids[1], "dishName": "Pasta", "kcal": 530.0},
-            {"id": created_ids[0], "dishName": "Pasta", "kcal": 510.0},
-            {"id": created_ids[2], "dishName": "Salad", "kcal": 190.0},
-        ]
-    }
+    dish_names_body = dish_names_response.json()
+    assert dish_names_body["dishNames"][0]["id"] == created_ids[1]
+    assert dish_names_body["dishNames"][0]["dishName"] == "Pasta"
+    assert dish_names_body["dishNames"][0]["kcal"] == 530.0
+    assert dish_names_body["dishNames"][1]["id"] == created_ids[0]
+    assert dish_names_body["dishNames"][1]["dishName"] == "Pasta"
+    assert dish_names_body["dishNames"][1]["kcal"] == 510.0
+    assert dish_names_body["dishNames"][2]["id"] == created_ids[2]
+    assert dish_names_body["dishNames"][2]["dishName"] == "Salad"
+    assert dish_names_body["dishNames"][2]["kcal"] == 190.0
+    for dish_name in dish_names_body["dishNames"]:
+        assert dish_name["createdAt"] is not None
+        assert dish_name["updatedAt"] is not None
 
     by_dish_response = client_with_stats_db.get(
         "/stats/dishes",
@@ -269,7 +290,12 @@ def test_delete_day_removes_all_meals(client_with_stats_db: TestClient) -> None:
 
     day_response = client_with_stats_db.get("/stats/days/2026-02-20/meals")
     assert day_response.status_code == 200
-    assert day_response.json() == {"day": "2026-02-20", "meals": []}
+    assert day_response.json() == {
+        "day": "2026-02-20",
+        "meals": [],
+        "createdAt": None,
+        "updatedAt": None,
+    }
 
     second_delete = client_with_stats_db.delete("/stats/days/2026-02-20")
     assert second_delete.status_code == 404
@@ -336,7 +362,12 @@ def test_delete_single_meal_in_day(client_with_stats_db: TestClient) -> None:
 
     empty_day = client_with_stats_db.get("/stats/days/2026-02-24/meals")
     assert empty_day.status_code == 200
-    assert empty_day.json() == {"day": "2026-02-24", "meals": []}
+    assert empty_day.json() == {
+        "day": "2026-02-24",
+        "meals": [],
+        "createdAt": None,
+        "updatedAt": None,
+    }
 
 
 def test_stats_are_isolated_per_user(

@@ -45,11 +45,15 @@ class MealRead(CamelModel):
     total_weight: float
     total_macros: MealTotalMacros
     ingredients: list[MealIngredient]
+    created_at: datetime
+    updated_at: datetime
 
 
 class StatisticsDayRead(CamelModel):
     day: date
     meals: list[MealRead]
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class StatisticsRead(CamelModel):
@@ -60,6 +64,8 @@ class DishNameRead(CamelModel):
     id: int
     dish_name: str
     kcal: float | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class DishNamesRead(CamelModel):

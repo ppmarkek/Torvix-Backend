@@ -57,6 +57,8 @@ def _serialize_meal(meal: MealEntry) -> MealRead:
         total_weight=meal.total_weight,
         total_macros=MealTotalMacros.model_validate(meal.total_macros),
         ingredients=[MealIngredient.model_validate(item) for item in meal.ingredients],
+        created_at=meal.created_at,
+        updated_at=meal.updated_at,
     )
 
 
@@ -65,6 +67,15 @@ def _extract_kcal(meal: MealEntry) -> float | None:
     if isinstance(calories, (int, float)):
         return float(calories)
     return None
+
+
+def _serialize_statistics_day(statistics_day: StatisticsDay, meals: list[MealRead]) -> StatisticsDayRead:
+    return StatisticsDayRead(
+        day=statistics_day.day,
+        meals=meals,
+        created_at=statistics_day.created_at,
+        updated_at=statistics_day.updated_at,
+    )
 
 
 @router.post("/meals", response_model=MealRead, status_code=status.HTTP_201_CREATED)
@@ -143,10 +154,7 @@ def get_statistics(
     for meal in meals:
         meals_by_day_id[meal.statistics_day_id].append(_serialize_meal(meal))
 
-    days = [
-        StatisticsDayRead(day=day.day, meals=meals_by_day_id.get(day.id or 0, []))
-        for day in statistics_days
-    ]
+    days = [_serialize_statistics_day(day, meals_by_day_id.get(day.id or 0, [])) for day in statistics_days]
     return StatisticsRead(days=days)
 
 
@@ -163,7 +171,12 @@ def get_daily_meals(
     )
     statistics_day = session.exec(day_statement).first()
     if statistics_day is None:
-        return StatisticsDayRead(day=day, meals=[])
+        return StatisticsDayRead(
+            day=day,
+            meals=[],
+            created_at=None,
+            updated_at=None,
+        )
 
     meals_statement = (
         select(MealEntry)
@@ -175,9 +188,9 @@ def get_daily_meals(
     )
     meals = session.exec(meals_statement).all()
 
-    return StatisticsDayRead(
-        day=statistics_day.day,
-        meals=[_serialize_meal(meal) for meal in meals],
+    return _serialize_statistics_day(
+        statistics_day,
+        [_serialize_meal(meal) for meal in meals],
     )
 
 
@@ -274,6 +287,8 @@ def get_dish_names(
                 id=meal.id,
                 dish_name=meal.dish_name,
                 kcal=_extract_kcal(meal),
+                created_at=meal.created_at,
+                updated_at=meal.updated_at,
             )
         )
     return DishNamesRead(dish_names=dish_names)
